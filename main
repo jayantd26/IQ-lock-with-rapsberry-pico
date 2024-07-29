@@ -1,0 +1,229 @@
+#program for IQLOCK Project by JAYANT DHANDALE 
+
+import utime
+import machine
+from machine import I2C
+from lcd_api import LcdApi
+from machine import I2C, Pin
+from urtc import DS1307
+from pico_i2c_lcd import I2cLcd
+from machine import PWM
+servo = PWM(Pin(18))#Include the servo motor pin
+servo.freq(50)#Set the frequency
+
+#initlizing i2c pins for lcd
+i2c = I2C(1, sda=machine.Pin(2), scl=machine.Pin(3), freq=500000)
+lcd = I2cLcd(i2c, 0x27, 2, 16)
+
+#initlizing i2c pin for rtc clock module
+i2c_rtc = I2C(0,scl = Pin(5),sda = Pin(4),freq = 400000)
+rtc = DS1307(i2c_rtc)
+
+#initlize led for door status
+led_pin = machine.Pin(25, machine.Pin.OUT)
+
+prd ='93' #predefine password credential
+temp_sensor = machine.ADC(4)
+cvt = 3.3/ (65535)
+
+#initlize pins for matrix key pad
+col_pins = [Pin(i, Pin.OUT) for i in [10,11,12,13]]
+row_pins = [Pin(i, Pin.IN, Pin.PULL_UP) for i in [6,7,8,9]]
+
+keys = [
+    ['1', '2', '3', 'A'],
+    ['4', '5', '6', 'B'],
+    ['7', '8', '9', 'C'],
+    ['*', '0', '#', 'D']
+]
+
+# Set the maximum input length
+MAX_INPUT_LENGTH = 4
+
+# Initialize the GPIO pins
+for pin in row_pins + col_pins:
+    pin.init(machine.Pin.IN, machine.Pin.PULL_UP)
+# Function to scan the matriax and return the pressed key
+def scan_keyboard():
+    for i, row_pin in enumerate(row_pins):
+        row_pin.init(machine.Pin.OUT)
+        row_pin.value(0)        
+        for j, col_pin in enumerate(col_pins):
+            if col_pin.value() == 0:
+                while col_pin.value() == 0:
+                    pass                
+                return keys[i][j]           
+        row_pin.init(machine.Pin.IN, machine.Pin.PULL_UP)
+    return None
+
+#key data entry loop
+def get_input():
+    input_string = ""
+    while len(input_string) < MAX_INPUT_LENGTH:
+        key = scan_keyboard()
+        if key is not None:
+            input_string += key          
+            if key == 'D':  #clear entry
+                if len(input_string) > 0:
+                    lcd.move_to(0,1)
+                    input_string = ""
+                    lcd.putstr('   ')                   
+            if key == '*':
+                break                    
+            spb = str(input_string)
+            lcd.move_to(0,1)
+            lcd.putstr(spb)
+            # delay for debounce time while key press
+            utime.sleep_ms(300)           
+    return input_string
+
+def entr():
+# 	first loop for home screen 
+    while True:
+        key = scan_keyboard()
+        lcd.move_to(1,0)
+        lcd.putstr("WELCOME ROOM:1")
+        adc_value = temp_sensor.read_u16()
+        vv = adc_value*cvt 
+        tms = 27 - (vv - 0.706)/0.001721
+        tml = int(tms)
+        tm = ("{:02d}".format(tml))
+        fg = str(tm)
+        lcd.move_to(1,1)
+        lcd.putstr("Temp:{}{}C".format(fg,chr(223)))
+        if key == '*':
+            break           
+def extc():
+	#servo lock close
+    while True:
+ 		servo.duty_u16(int(5000))
+		break
+	
+def ext():
+    lcd.clear()
+    lcd.putstr('DOOR OPEN')
+    while True:
+    #set date and time         
+        key = scan_keyboard()
+        if key == "*":
+            input_dt = set_date_time()
+            date = input_dt[0:8]
+            time = input_dt[8:12]
+            day = int(date[0:2])
+            month = int(date[2:4])
+            year = int(date[4:8])
+            hour = int(time[0:2])
+            minute = int(time[2:4])
+            rtc.datetime((year, month, day, 0, hour, minute, 0, 0))
+            break
+        
+        if key == "A":
+		#project data
+            lcd.clear()
+            lcd.putstr("Prj-JAYANT DHANDALE")
+            utime.sleep(1.25)
+            led_pin.off()
+            extc()
+            break
+        
+        if key == "B":
+        #door close
+            lcd.clear()
+            led_pin.off()
+            extc() 
+            lcd.putstr("DOOR CLOSE")
+            utime.sleep(0.25)
+            break
+
+
+def set_date_time():
+	#set date and time loop 
+    lcd.clear()
+    lcd.putstr("DDMMYYYY HHMM")
+    input_dt = ""
+    while len(input_dt) < 12:
+        key = scan_keyboard()
+        
+        if key is not None:
+            input_dt += key
+            
+            # Update LCD curser for date & time spacing
+            lcd.move_to(0, 1)
+            lcd.putstr(input_dt[:8])
+            lcd.move_to(9, 1)
+            lcd.putstr(input_dt[8:])       
+            # Wait for debounce time to avoid false positives
+            utime.sleep_ms(300)
+            
+            if key == 'D':  #clear entry
+                if len(input_dt) > 0:
+                    lcd.move_to(0,1)
+                    input_dt = ""
+                    lcd.putstr('             ')
+            if key == "*":
+				break
+                               
+    return input_dt
+while True:
+	#second screen loop
+    (year,month,date,day,hour,minute,second,p1)=rtc.datetime()
+    servo.duty_u16(int(5000))
+    entr()
+    lcd.clear()
+    #seconds refresh three times
+    if(second == 59):
+        second = 0.   
+    si = int(second + 1)
+    sz = ("{:02d}".format(si))
+    ss = str(sz)
+    u = (minute)
+    #clock credentials variables
+    tm = 'Time:'"{:02d}:{:02d}:{:02d}".format(hour,minute,second)
+    dt = 'Date:'"{}/{}/{}".format(date,month,year)
+    pas = [int(x) for x in str (u)]
+    #decode hint "sum" fuction as addtion for two integer in pas variable 
+    pd = str(sum(pas))
+    #add of integers in pas
+    j =int(pd)
+    #set data as int
+    ly = ("{:02d}".format(j))
+    #always form two digit number
+    sm = prd+ly
+    #join predefine & two digit number
+    l = str(sm)
+    j = str(l)
+    lcd.putstr(tm)
+    #display date and time 
+    lcd.move_to(0,1)
+    lcd.putstr(dt)
+    utime.sleep(1)
+    lcd.move_to(11,0)
+    s1 = str(ss)
+    lcd.putstr(s1)
+    utime.sleep(1)
+    lcd.move_to(11,0)
+    sj = int(second + 2)
+    sk = ("{:02d}".format(sj))
+    sh = str(sk)
+    lcd.putstr(sh)
+    utime.sleep(1)
+
+    lcd.clear()
+    lcd.putstr(' Enter Password')
+    #entre password
+    input_string = get_input()
+    jk = str(input_string)
+    lcd.move_to(0,1)
+    lcd.clear()    
+    if(jk == j):
+       #password match  
+       led_pin.on()  # Turn on LED 2ext()
+       servo.duty_u16(int(8000))#door open
+       ext()
+       utime.sleep(1)
+       lcd.clear()
+    else:
+		#password not match
+        lcd.putstr('! Wrong Password')
+        utime.sleep(1)       
+        lcd.clear()
